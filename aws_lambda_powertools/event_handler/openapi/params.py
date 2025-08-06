@@ -29,6 +29,8 @@ if TYPE_CHECKING:
 This turns the low-level function signature into typed, validated Pydantic models for consumption.
 """
 
+__all__ = ["Path", "Query", "Header", "Body", "Form", "File"]
+
 
 class ParamTypes(Enum):
     query = "query"
@@ -809,9 +811,15 @@ class _Form(Body):
         )
 
 
-class _File(_Form):
+class Form(_Form):
     """
-    A class used internally to represent a file parameter in a path operation.
+    A class used to represent a form parameter in a path operation.
+    """
+
+
+class File(_Form):
+    """
+    A class used to represent a file parameter in a path operation.
     """
 
     def __init__(
@@ -848,6 +856,87 @@ class _File(_Form):
         json_schema_extra: dict[str, Any] | None = None,
         **extra: Any,
     ):
+        """
+        Constructs a new File param for multipart/form-data file uploads.
+
+        Parameters
+        ----------
+        default: Any
+            The default value of the parameter
+        default_factory: Callable[[], Any], optional
+            Callable that will be called when a default value is needed for this field
+        annotation: Any, optional
+            The type annotation of the parameter
+        media_type: str, optional
+            The media type for the parameter. Defaults to "multipart/form-data"
+        alias: str, optional
+            The public name of the field
+        alias_priority: int, optional
+            Priority of the alias. This affects whether an alias generator is used
+        validation_alias: str | AliasPath | AliasChoices | None, optional
+            Alias to be used for validation only
+        serialization_alias: str | AliasPath | AliasChoices | None, optional
+            Alias to be used for serialization only
+        title: str, optional
+            The title of the parameter
+        description: str, optional
+            The description of the parameter
+        gt: float, optional
+            Only applies to numbers, required the field to be "greater than"
+        ge: float, optional
+            Only applies to numbers, required the field to be "greater than or equal"
+        lt: float, optional
+            Only applies to numbers, required the field to be "less than"
+        le: float, optional
+            Only applies to numbers, required the field to be "less than or equal"
+        min_length: int, optional
+            Only applies to strings, required the field to have a minimum length
+        max_length: int, optional
+            Only applies to strings, required the field to have a maximum length
+        pattern: str, optional
+            Only applies to strings, requires the field match against a regular expression pattern string
+        discriminator: str, optional
+            Parameter field name for discriminating the type in a tagged union
+        strict: bool, optional
+            Enables Pydantic's strict mode for the field
+        multiple_of: float, optional
+            Only applies to numbers, requires the field to be a multiple of the given value
+        allow_inf_nan: bool, optional
+            Only applies to numbers, requires the field to allow infinity and NaN values
+        max_digits: int, optional
+            Only applies to Decimals, requires the field to have a maxmium number of digits within the decimal.
+        decimal_places: int, optional
+            Only applies to Decimals, requires the field to have at most a number of decimal places
+        examples: list[Any], optional
+            A list of examples for the parameter
+        deprecated: bool, optional
+            If `True`, the parameter will be marked as deprecated
+        include_in_schema: bool, optional
+            If `False`, the parameter will be excluded from the generated OpenAPI schema
+        json_schema_extra: dict[str, Any], optional
+            Extra values to include in the generated OpenAPI schema
+
+        Example
+        -------
+        ```python
+        from typing import Annotated
+        from aws_lambda_powertools.event_handler import APIGatewayRestResolver
+        from aws_lambda_powertools.event_handler.openapi.params import File
+
+        app = APIGatewayRestResolver(enable_validation=True)
+
+        @app.post("/upload")
+        def upload_file(file: Annotated[bytes, File(description="File to upload")]):
+            return {"file_size": len(file)}
+        ```
+        """
+        # For file uploads, ensure the OpenAPI schema has the correct format
+        file_schema_extra = {"format": "binary"}
+        if json_schema_extra:
+            json_schema_extra.update(file_schema_extra)
+        else:
+            json_schema_extra = file_schema_extra
+
         super().__init__(
             default=default,
             default_factory=default_factory,

@@ -5,6 +5,7 @@ import json
 import logging
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any, Callable, Mapping, MutableMapping, Sequence
+from urllib.parse import parse_qs
 
 from pydantic import BaseModel
 
@@ -19,6 +20,12 @@ from aws_lambda_powertools.event_handler.openapi.dependant import is_scalar_fiel
 from aws_lambda_powertools.event_handler.openapi.encoders import jsonable_encoder
 from aws_lambda_powertools.event_handler.openapi.exceptions import RequestValidationError, ResponseValidationError
 from aws_lambda_powertools.event_handler.openapi.params import Param
+
+# Constants for content types and parsing
+CONTENT_DISPOSITION_NAME_PARAM = "name="
+APPLICATION_JSON_CONTENT_TYPE = "application/json"
+APPLICATION_FORM_CONTENT_TYPE = "application/x-www-form-urlencoded"
+MULTIPART_FORM_CONTENT_TYPE = "multipart/form-data"
 
 if TYPE_CHECKING:
     from aws_lambda_powertools.event_handler import Response
@@ -246,11 +253,12 @@ class OpenAPIValidationMiddleware(BaseMiddlewareHandler):
 
     def _get_body(self, app: EventHandlerInstance) -> dict[str, Any]:
         """
-        Get the request body from the event, and parse it as JSON.
+        Get the request body from the event, and parse it as JSON, form data, or multipart data.
         """
+        content_type = app.current_event.headers.get("content-type", "")
 
-        content_type = app.current_event.headers.get("content-type")
-        if not content_type or content_type.strip().startswith("application/json"):
+        # Handle JSON content (default)
+        if not content_type or content_type.strip().startswith(APPLICATION_JSON_CONTENT_TYPE):
             try:
                 return app.current_event.json_body
             except json.JSONDecodeError as e:
@@ -266,8 +274,134 @@ class OpenAPIValidationMiddleware(BaseMiddlewareHandler):
                     ],
                     body=e.doc,
                 ) from e
+
+        # Handle form data content
+        elif content_type.startswith(APPLICATION_FORM_CONTENT_TYPE):
+            return self._parse_form_data(app)
+
+        # Handle multipart form data content
+        elif content_type.startswith(MULTIPART_FORM_CONTENT_TYPE):
+            return self._parse_multipart_data(app, content_type)
+
         else:
-            raise NotImplementedError("Only JSON body is supported")
+            raise NotImplementedError(f"Content type '{content_type}' is not supported")
+
+    def _parse_form_data(self, app: EventHandlerInstance) -> dict[str, Any]:
+        """Parse application/x-www-form-urlencoded data."""
+        body = app.current_event.decoded_body or ""
+
+        try:
+            # Parse the form data
+            parsed_data = parse_qs(body, keep_blank_values=True)
+
+            # Convert single-item lists to strings for easier use
+            result: dict[str, Any] = {}
+            for key, values in parsed_data.items():
+                if len(values) == 1:
+                    result[key] = values[0]
+                else:
+                    result[key] = values  # Keep as list for multiple values
+
+            return result
+        except Exception as e:
+            raise RequestValidationError(
+                [
+                    {
+                        "type": "form_invalid",
+                        "loc": ("body",),
+                        "msg": "Invalid form data",
+                        "input": {},
+                        "ctx": {"error": str(e)},
+                    },
+                ]
+            ) from e
+
+    def _parse_multipart_data(self, app: EventHandlerInstance, content_type: str) -> dict[str, Any]:
+        """Parse multipart/form-data."""
+        import base64
+        import re
+
+        try:
+            # Get the raw body - it might be base64 encoded
+            body = app.current_event.body or ""
+
+            # Handle base64 encoded body (common in Lambda)
+            if app.current_event.is_base64_encoded:
+                try:
+                    decoded_bytes = base64.b64decode(body)
+                except Exception:
+                    # If decoding fails, use body as-is
+                    decoded_bytes = body.encode("utf-8") if isinstance(body, str) else body
+            else:
+                decoded_bytes = body.encode("utf-8") if isinstance(body, str) else body
+
+            # Extract boundary from content type - handle both standard and WebKit boundaries
+            boundary_match = re.search(r"boundary=([^;,\s]+)", content_type)
+            if not boundary_match:
+                # Handle WebKit browsers that may use different boundary formats
+                webkit_match = re.search(r"WebKitFormBoundary([a-zA-Z0-9]+)", content_type)
+                if webkit_match:
+                    boundary = "WebKitFormBoundary" + webkit_match.group(1)
+                else:
+                    raise ValueError("No boundary found in multipart content-type")
+            else:
+                boundary = boundary_match.group(1).strip('"')
+                # No need to modify the boundary - use it exactly as provided in the content-type
+                # This handles cases like ----WebKitFormBoundary7MA4YWxkTrZu0gW correctly
+            boundary_bytes = ("--" + boundary).encode("utf-8")
+
+            # Parse multipart sections
+            parsed_data: dict[str, Any] = {}
+            if decoded_bytes:
+                sections = decoded_bytes.split(boundary_bytes)
+
+                for section in sections[1:-1]:  # Skip first empty and last closing parts
+                    if not section.strip():
+                        continue
+
+                    # Split headers and content
+                    header_end = section.find(b"\r\n\r\n")
+                    if header_end == -1:
+                        header_end = section.find(b"\n\n")
+                        if header_end == -1:
+                            continue
+                        content = section[header_end + 2 :].strip()
+                    else:
+                        content = section[header_end + 4 :].strip()
+
+                    headers_part = section[:header_end].decode("utf-8", errors="ignore")
+
+                    # Extract field name from Content-Disposition header
+                    name_match = re.search(r'name="([^"]+)"', headers_part)
+                    if name_match:
+                        field_name = name_match.group(1)
+
+                        # Check if it's a file field
+                        if "filename=" in headers_part:
+                            # It's a file - store as bytes
+                            parsed_data[field_name] = content
+                        else:
+                            # It's a regular form field - decode as string
+                            try:
+                                parsed_data[field_name] = content.decode("utf-8")
+                            except UnicodeDecodeError:
+                                # If can't decode as text, keep as bytes
+                                parsed_data[field_name] = content
+
+            return parsed_data
+
+        except Exception as e:
+            raise RequestValidationError(
+                [
+                    {
+                        "type": "multipart_invalid",
+                        "loc": ("body",),
+                        "msg": "Invalid multipart form data",
+                        "input": {},
+                        "ctx": {"error": str(e)},
+                    },
+                ]
+            ) from e
 
 
 def _request_params_to_args(

@@ -649,3 +649,297 @@ def test_openapi_with_openapi_example():
     assert parameter.schema_.type == "integer"
     assert parameter.schema_.default == 1
     assert parameter.schema_.title == "Count"
+
+
+# File parameter tests
+
+
+def test_openapi_file_parameter_schema_generation():
+    """Test that File parameters generate correct OpenAPI schema for multipart/form-data."""
+    from aws_lambda_powertools.event_handler.openapi.params import File
+
+    app = APIGatewayRestResolver()
+
+    @app.post("/upload")
+    def upload_file(file: Annotated[bytes, File(description="File to upload")]):
+        return {"file_size": len(file)}
+
+    schema = app.get_openapi_schema()
+
+    # Check that the path exists
+    assert "/upload" in schema.paths
+
+    upload_operation = schema.paths["/upload"].post
+    assert upload_operation is not None
+
+    # Check request body schema
+    assert upload_operation.requestBody is not None
+    assert "multipart/form-data" in upload_operation.requestBody.content
+
+    multipart_content = upload_operation.requestBody.content["multipart/form-data"]
+    assert multipart_content.schema_ is not None
+
+    # The schema should have a $ref to components
+    assert multipart_content.schema_.ref is not None
+
+    # Extract the schema name from the ref
+    ref_name = multipart_content.schema_.ref.split("/")[-1]
+
+    # Check the actual schema in components
+    assert schema.components is not None
+    assert schema.components.schemas is not None
+    assert ref_name in schema.components.schemas
+
+    actual_schema = schema.components.schemas[ref_name]
+    assert "file" in actual_schema.properties
+
+    file_property = actual_schema.properties["file"]
+    assert file_property.type == "string"
+    assert file_property.format == "binary"
+    assert file_property.description == "File to upload"
+
+
+def test_openapi_file_parameter_with_constraints():
+    """Test File parameters with size constraints."""
+    from aws_lambda_powertools.event_handler.openapi.params import File
+
+    app = APIGatewayRestResolver()
+
+    @app.post("/upload")
+    def upload_file(
+        file: Annotated[
+            bytes,
+            File(
+                description="Image file",
+                min_length=1024,  # 1KB minimum
+                max_length=10485760,  # 10MB maximum
+            ),
+        ],
+    ):
+        return {"file_size": len(file)}
+
+    schema = app.get_openapi_schema()
+
+    multipart_content = schema.paths["/upload"].post.requestBody.content["multipart/form-data"]
+
+    # Get the actual schema from components
+    ref_name = multipart_content.schema_.ref.split("/")[-1]
+    actual_schema = schema.components.schemas[ref_name]
+    file_property = actual_schema.properties["file"]
+
+    assert file_property.minLength == 1024
+    assert file_property.maxLength == 10485760
+
+
+def test_openapi_multiple_file_parameters():
+    """Test multiple File parameters in one endpoint."""
+    from aws_lambda_powertools.event_handler.openapi.params import File
+
+    app = APIGatewayRestResolver()
+
+    @app.post("/upload-multiple")
+    def upload_files(
+        image: Annotated[bytes, File(description="Image file")],
+        document: Annotated[bytes, File(description="Document file")],
+        metadata: Annotated[str, File(description="Metadata as text")],
+    ):
+        return {"image_size": len(image), "document_size": len(document), "metadata": metadata}
+
+    schema = app.get_openapi_schema()
+
+    multipart_content = schema.paths["/upload-multiple"].post.requestBody.content["multipart/form-data"]
+
+    # Get the actual schema from components
+    ref_name = multipart_content.schema_.ref.split("/")[-1]
+    actual_schema = schema.components.schemas[ref_name]
+    properties = actual_schema.properties
+
+    assert "image" in properties
+    assert "document" in properties
+    assert "metadata" in properties
+
+    assert properties["image"].type == "string"
+    assert properties["image"].format == "binary"
+    assert properties["document"].type == "string"
+    assert properties["document"].format == "binary"
+    assert properties["metadata"].type == "string"
+
+
+def test_openapi_mixed_file_and_form_parameters():
+    """Test mixing File and Form parameters."""
+    from aws_lambda_powertools.event_handler.openapi.params import File, Form
+
+    app = APIGatewayRestResolver()
+
+    @app.post("/upload-with-metadata")
+    def upload_with_metadata(
+        file: Annotated[bytes, File(description="File to upload")],
+        title: Annotated[str, Form(description="File title")],
+        category: Annotated[str, Form(description="File category")],
+    ):
+        return {"file_size": len(file), "title": title, "category": category}
+
+    schema = app.get_openapi_schema()
+
+    # Should generate multipart/form-data since File parameter is present
+    multipart_content = schema.paths["/upload-with-metadata"].post.requestBody.content["multipart/form-data"]
+
+    # Get the actual schema from components
+    ref_name = multipart_content.schema_.ref.split("/")[-1]
+    actual_schema = schema.components.schemas[ref_name]
+    properties = actual_schema.properties
+
+    assert "file" in properties
+    assert "title" in properties
+    assert "category" in properties
+
+    assert properties["file"].format == "binary"
+    assert properties["title"].type == "string"
+    assert properties["category"].type == "string"
+
+
+def test_openapi_optional_file_parameter():
+    """Test optional File parameter."""
+    from aws_lambda_powertools.event_handler.openapi.params import File
+
+    app = APIGatewayRestResolver()
+
+    @app.post("/upload-optional")
+    def upload_optional(file: Annotated[bytes | None, File(description="Optional file")] = None):
+        return {"has_file": file is not None}
+
+    schema = app.get_openapi_schema()
+
+    multipart_content = schema.paths["/upload-optional"].post.requestBody.content["multipart/form-data"]
+
+    # Get the actual schema from components
+    ref_name = multipart_content.schema_.ref.split("/")[-1]
+    actual_schema = schema.components.schemas[ref_name]
+
+    # Should not be required since it's optional
+    required_fields = actual_schema.required or []
+    assert "file" not in required_fields
+
+
+def test_openapi_file_parameter_with_examples():
+    """Test File parameter with examples."""
+    from aws_lambda_powertools.event_handler.openapi.params import File
+
+    app = APIGatewayRestResolver()
+
+    @app.post("/upload")
+    def upload_file(file: Annotated[bytes, File(description="Image file", examples=[b"example file content"])]):
+        return {"file_size": len(file)}
+
+    schema = app.get_openapi_schema()
+
+    multipart_content = schema.paths["/upload"].post.requestBody.content["multipart/form-data"]
+
+    # Get the actual schema from components
+    ref_name = multipart_content.schema_.ref.split("/")[-1]
+    actual_schema = schema.components.schemas[ref_name]
+    file_property = actual_schema.properties["file"]
+
+    # Bytes examples are serialized as strings in OpenAPI schema
+    assert file_property.examples == ["example file content"]
+
+
+# Form parameter tests
+
+
+def test_openapi_form_parameter_schema_generation():
+    """Test that Form parameters generate correct OpenAPI schema for form data."""
+    from aws_lambda_powertools.event_handler.openapi.params import Form
+
+    app = APIGatewayRestResolver()
+
+    @app.post("/contact")
+    def contact_form(
+        name: Annotated[str, Form(description="Contact name")],
+        email: Annotated[str, Form(description="Contact email")],
+        message: Annotated[str, Form(description="Contact message")],
+    ):
+        return {"message": "Form submitted successfully"}
+
+    schema = app.get_openapi_schema()
+
+    # Check that the path exists
+    assert "/contact" in schema.paths
+
+    contact_operation = schema.paths["/contact"].post
+    assert contact_operation is not None
+
+    # Check request body schema
+    assert contact_operation.requestBody is not None
+    assert "application/x-www-form-urlencoded" in contact_operation.requestBody.content
+
+    form_content = contact_operation.requestBody.content["application/x-www-form-urlencoded"]
+    assert form_content.schema_ is not None
+
+    # Get the actual schema from components
+    ref_name = form_content.schema_.ref.split("/")[-1]
+    actual_schema = schema.components.schemas[ref_name]
+
+    # Check form properties
+    assert "name" in actual_schema.properties
+    assert "email" in actual_schema.properties
+    assert "message" in actual_schema.properties
+
+    name_property = actual_schema.properties["name"]
+    assert name_property.type == "string"
+    assert name_property.description == "Contact name"
+
+
+def test_openapi_form_parameter_with_constraints():
+    """Test Form parameters with constraints."""
+    from aws_lambda_powertools.event_handler.openapi.params import Form
+
+    app = APIGatewayRestResolver()
+
+    @app.post("/register")
+    def register_user(
+        username: Annotated[str, Form(min_length=3, max_length=20)],
+        email: Annotated[str, Form()],
+        password: Annotated[str, Form(min_length=8)],
+    ):
+        return {"status": "registered"}
+
+    schema = app.get_openapi_schema()
+
+    form_content = schema.paths["/register"].post.requestBody.content["application/x-www-form-urlencoded"]
+
+    # Get the actual schema from components
+    ref_name = form_content.schema_.ref.split("/")[-1]
+    actual_schema = schema.components.schemas[ref_name]
+    properties = actual_schema.properties
+
+    assert properties["username"].minLength == 3
+    assert properties["username"].maxLength == 20
+    assert properties["password"].minLength == 8
+
+
+def test_openapi_optional_form_parameter():
+    """Test optional Form parameter."""
+    from aws_lambda_powertools.event_handler.openapi.params import Form
+
+    app = APIGatewayRestResolver()
+
+    @app.post("/feedback")
+    def submit_feedback(
+        rating: Annotated[int, Form(description="Rating from 1-5")],
+        comment: Annotated[str | None, Form(description="Optional comment")] = None,
+    ):
+        return {"rating": rating, "has_comment": comment is not None}
+
+    schema = app.get_openapi_schema()
+
+    form_content = schema.paths["/feedback"].post.requestBody.content["application/x-www-form-urlencoded"]
+
+    # Get the actual schema from components
+    ref_name = form_content.schema_.ref.split("/")[-1]
+    actual_schema = schema.components.schemas[ref_name]
+
+    # Check required fields
+    required_fields = actual_schema.required or []
+    assert "rating" in required_fields
+    assert "comment" not in required_fields

@@ -1,6 +1,7 @@
 """
 Test multipart/form-data validation functionality for File parameters.
 """
+
 import base64
 import json
 from typing import Annotated
@@ -40,14 +41,14 @@ def make_request_event(method="GET", path="/", body="", headers=None, query_para
                 "cognitoAuthenticationProvider": None,
                 "userArn": None,
                 "userAgent": "Custom User Agent String",
-                "user": None
+                "user": None,
             },
             "resourcePath": path,
             "httpMethod": method,
-            "apiId": "abcdefghij"
+            "apiId": "abcdefghij",
         },
         "body": body,
-        "isBase64Encoded": False
+        "isBase64Encoded": False,
     }
 
 
@@ -61,23 +62,20 @@ def test_multipart_file_upload_validation():
 
     # Create multipart request with file content
     file_content = b"test file content"
-    encoded_content = base64.b64encode(file_content).decode('utf-8')
+    encoded_content = base64.b64encode(file_content).decode("utf-8")
     boundary = "----WebKitFormBoundary7MA4YWxkTrZu0gW"
-    
+
     body = (
-        f'--{boundary}\r\n'
+        f"--{boundary}\r\n"
         'Content-Disposition: form-data; name="file"; filename="test.txt"\r\n'
-        'Content-Type: text/plain\r\n'
-        '\r\n'
-        f'{encoded_content}\r\n'
-        f'--{boundary}--\r\n'
+        "Content-Type: text/plain\r\n"
+        "\r\n"
+        f"{encoded_content}\r\n"
+        f"--{boundary}--\r\n"
     )
 
     event = make_request_event(
-        method="POST",
-        path="/upload", 
-        body=body,
-        headers={"content-type": f"multipart/form-data; boundary={boundary}"}
+        method="POST", path="/upload", body=body, headers={"content-type": f"multipart/form-data; boundary={boundary}"}
     )
 
     response = app.resolve(event, {})
@@ -92,46 +90,40 @@ def test_multipart_mixed_file_and_form_validation():
     def upload_with_metadata(
         file: Annotated[bytes, File(description="File to upload")],
         title: Annotated[str, Form(description="File title")],
-        category: Annotated[str, Form(description="File category")]
+        category: Annotated[str, Form(description="File category")],
     ):
-        return {
-            "file_size": len(file),
-            "title": title,
-            "category": category
-        }
+        return {"file_size": len(file), "title": title, "category": category}
 
     file_content = b"test file content"
-    encoded_content = base64.b64encode(file_content).decode('utf-8')
+    encoded_content = base64.b64encode(file_content).decode("utf-8")
     boundary = "----WebKitFormBoundary7MA4YWxkTrZu0gW"
-    
+
     body = (
-        f'--{boundary}\r\n'
+        f"--{boundary}\r\n"
         'Content-Disposition: form-data; name="file"; filename="test.txt"\r\n'
-        'Content-Type: text/plain\r\n'
-        '\r\n'
-        f'{encoded_content}\r\n'
-        f'--{boundary}\r\n'
+        "Content-Type: text/plain\r\n"
+        "\r\n"
+        f"{encoded_content}\r\n"
+        f"--{boundary}\r\n"
         'Content-Disposition: form-data; name="title"\r\n'
-        '\r\n'
-        'My Test File\r\n'
-        f'--{boundary}\r\n'
+        "\r\n"
+        "My Test File\r\n"
+        f"--{boundary}\r\n"
         'Content-Disposition: form-data; name="category"\r\n'
-        '\r\n'
-        'documents\r\n'
-        f'--{boundary}--\r\n'
+        "\r\n"
+        "documents\r\n"
+        f"--{boundary}--\r\n"
     )
 
     event = make_request_event(
-        method="POST",
-        path="/upload",
-        body=body,
-        headers={"content-type": f"multipart/form-data; boundary={boundary}"}
+        method="POST", path="/upload", body=body, headers={"content-type": f"multipart/form-data; boundary={boundary}"}
     )
 
     response = app.resolve(event, {})
     assert response["statusCode"] == 200
-    
+
     import json
+
     response_body = json.loads(response["body"])
     assert response_body["title"] == "My Test File"
     assert response_body["category"] == "documents"
@@ -153,10 +145,13 @@ def test_multipart_file_size_constraint_validation():
 
     @app.post("/upload")
     def upload_file(
-        file: Annotated[bytes, File(
-            description="Small file only",
-            max_length=10  # Very small limit for testing
-        )]
+        file: Annotated[
+            bytes,
+            File(
+                description="Small file only",
+                max_length=10,  # Very small limit for testing
+            ),
+        ],
     ):
         return {"file_size": len(file)}
 
@@ -168,13 +163,9 @@ def test_multipart_optional_file_validation():
     @app.post("/upload")
     def upload_optional(
         message: Annotated[str, Form(description="Required message")],
-        file: Annotated[bytes | None, File(description="Optional file")] = None
+        file: Annotated[bytes | None, File(description="Optional file")] = None,
     ):
-        return {
-            "has_file": file is not None,
-            "file_size": len(file) if file else 0,
-            "message": message
-        }
+        return {"has_file": file is not None, "file_size": len(file) if file else 0, "message": message}
 
 
 def test_multipart_boundary_parsing_edge_cases():
@@ -204,21 +195,12 @@ def test_missing_content_type_boundary():
         return {"file_size": len(file)}
 
     boundary = "----WebKitFormBoundary7MA4YWxkTrZu0gW"
-    
+
     # Body with only form fields, no file
-    body = (
-        f'--{boundary}\r\n'
-        'Content-Disposition: form-data; name="other_field"\r\n'
-        '\r\n'
-        'some value\r\n'
-        f'--{boundary}--\r\n'
-    )
+    body = f'--{boundary}\r\nContent-Disposition: form-data; name="other_field"\r\n\r\nsome value\r\n--{boundary}--\r\n'
 
     event = make_request_event(
-        method="POST",
-        path="/upload",
-        body=body,
-        headers={"content-type": f"multipart/form-data; boundary={boundary}"}
+        method="POST", path="/upload", body=body, headers={"content-type": f"multipart/form-data; boundary={boundary}"}
     )
 
     response = app.resolve(event, {})
@@ -232,32 +214,32 @@ def test_multipart_file_size_constraint_validation():
 
     @app.post("/upload")
     def upload_file(
-        file: Annotated[bytes, File(
-            description="Small file only",
-            max_length=10  # Very small limit for testing
-        )]
+        file: Annotated[
+            bytes,
+            File(
+                description="Small file only",
+                max_length=10,  # Very small limit for testing
+            ),
+        ],
     ):
         return {"file_size": len(file)}
 
     # File content larger than allowed
     file_content = b"this content is definitely longer than 10 bytes"
-    encoded_content = base64.b64encode(file_content).decode('utf-8')
+    encoded_content = base64.b64encode(file_content).decode("utf-8")
     boundary = "----WebKitFormBoundary7MA4YWxkTrZu0gW"
-    
+
     body = (
-        f'--{boundary}\r\n'
+        f"--{boundary}\r\n"
         'Content-Disposition: form-data; name="file"; filename="large.txt"\r\n'
-        'Content-Type: text/plain\r\n'
-        '\r\n'
-        f'{encoded_content}\r\n'
-        f'--{boundary}--\r\n'
+        "Content-Type: text/plain\r\n"
+        "\r\n"
+        f"{encoded_content}\r\n"
+        f"--{boundary}--\r\n"
     )
 
     event = make_request_event(
-        method="POST",
-        path="/upload",
-        body=body,
-        headers={"content-type": f"multipart/form-data; boundary={boundary}"}
+        method="POST", path="/upload", body=body, headers={"content-type": f"multipart/form-data; boundary={boundary}"}
     )
 
     response = app.resolve(event, {})
@@ -272,36 +254,30 @@ def test_multipart_optional_file_validation():
     @app.post("/upload")
     def upload_optional(
         message: Annotated[str, Form(description="Required message")],
-        file: Annotated[bytes | None, File(description="Optional file")] = None
+        file: Annotated[bytes | None, File(description="Optional file")] = None,
     ):
-        return {
-            "has_file": file is not None,
-            "file_size": len(file) if file else 0,
-            "message": message
-        }
+        return {"has_file": file is not None, "file_size": len(file) if file else 0, "message": message}
 
     boundary = "----WebKitFormBoundary7MA4YWxkTrZu0gW"
-    
+
     # Body with only required form field, no file
     body = (
-        f'--{boundary}\r\n'
+        f"--{boundary}\r\n"
         'Content-Disposition: form-data; name="message"\r\n'
-        '\r\n'
-        'Hello without file\r\n'
-        f'--{boundary}--\r\n'
+        "\r\n"
+        "Hello without file\r\n"
+        f"--{boundary}--\r\n"
     )
 
     event = make_request_event(
-        method="POST",
-        path="/upload",
-        body=body,
-        headers={"content-type": f"multipart/form-data; boundary={boundary}"}
+        method="POST", path="/upload", body=body, headers={"content-type": f"multipart/form-data; boundary={boundary}"}
     )
 
     response = app.resolve(event, {})
     assert response["statusCode"] == 200
-    
+
     import json
+
     response_body = json.loads(response["body"])
     assert response_body["has_file"] is False
     assert response_body["message"] == "Hello without file"
@@ -319,15 +295,15 @@ def test_multipart_boundary_parsing_edge_cases():
     # Test with quotes around boundary
     boundary = "----WebKitFormBoundary7MA4YWxkTrZu0gW"
     file_content = b"test"
-    encoded_content = base64.b64encode(file_content).decode('utf-8')
-    
+    encoded_content = base64.b64encode(file_content).decode("utf-8")
+
     body = (
-        f'--{boundary}\r\n'
+        f"--{boundary}\r\n"
         'Content-Disposition: form-data; name="file"; filename="test.txt"\r\n'
-        'Content-Type: text/plain\r\n'
-        '\r\n'
-        f'{encoded_content}\r\n'
-        f'--{boundary}--\r\n'
+        "Content-Type: text/plain\r\n"
+        "\r\n"
+        f"{encoded_content}\r\n"
+        f"--{boundary}--\r\n"
     )
 
     # Test with quoted boundary in content-type
@@ -335,7 +311,7 @@ def test_multipart_boundary_parsing_edge_cases():
         method="POST",
         path="/upload",
         body=body,
-        headers={"content-type": f'multipart/form-data; boundary="{boundary}"'}
+        headers={"content-type": f'multipart/form-data; boundary="{boundary}"'},
     )
 
     response = app.resolve(event, {})
@@ -355,10 +331,7 @@ def test_invalid_multipart_format():
     body = "invalid multipart content"
 
     event = make_request_event(
-        method="POST",
-        path="/upload",
-        body=body,
-        headers={"content-type": "multipart/form-data; boundary=test"}
+        method="POST", path="/upload", body=body, headers={"content-type": "multipart/form-data; boundary=test"}
     )
 
     response = app.resolve(event, {})
@@ -374,13 +347,13 @@ def test_missing_content_type_boundary():
     def upload_file(file: Annotated[bytes, File()]):
         return {"file_size": len(file)}
 
-    body = "--boundary\r\nContent-Disposition: form-data; name=\"file\"\r\n\r\ntest\r\n--boundary--"
+    body = '--boundary\r\nContent-Disposition: form-data; name="file"\r\n\r\ntest\r\n--boundary--'
 
     event = make_request_event(
         method="POST",
         path="/upload",
         body=body,
-        headers={"content-type": "multipart/form-data"}  # Missing boundary
+        headers={"content-type": "multipart/form-data"},  # Missing boundary
     )
 
     response = app.resolve(event, {})
